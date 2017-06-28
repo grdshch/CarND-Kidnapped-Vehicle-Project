@@ -20,6 +20,19 @@
 using namespace std;
 
 void ParticleFilter::init(double x, double y, double theta, double std[]) {
+    num_particles = 10;
+    particles.reserve(num_particles);
+
+    std::normal_distribution<double> dist_x(x, std[0]);
+    std::normal_distribution<double> dist_y(y, std[1]);
+    std::normal_distribution<double> dist_t(theta, std[2]);
+    std::default_random_engine gen;
+
+    for (unsigned int i = 0; i < num_particles; ++i) {
+        particles.emplace_back(Particle(i, dist_x(gen), dist_y(gen), dist_t(gen), 1));
+    }
+    weights.resize(num_particles, 1);
+
 	// TODO: Set the number of particles. Initialize all particles to first position (based on estimates of 
 	//   x, y, theta and their uncertainties from GPS) and all weights to 1. 
 	// Add random Gaussian noise to each particle.
@@ -32,7 +45,17 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
 	// NOTE: When adding noise you may find std::normal_distribution and std::default_random_engine useful.
 	//  http://en.cppreference.com/w/cpp/numeric/random/normal_distribution
 	//  http://www.cplusplus.com/reference/random/default_random_engine/
-
+    for (auto& p: particles) {
+        if (fabs(yaw_rate) < 0.0001f) {
+            p.x += velocity * delta_t * std::cos(p.theta);
+            p.y += velocity * delta_t * std::sin(p.theta);
+        }
+        else {
+            p.x += velocity / yaw_rate * (std::sin(p.theta + yaw_rate * delta_t) - std::sin(p.theta));
+            p.y += velocity / yaw_rate * (std::cos(p.theta) - std::cos(p.theta + yaw_rate * delta_t));
+            p.theta += yaw_rate * delta_t;
+        }
+    }
 }
 
 void ParticleFilter::dataAssociation(std::vector<LandmarkObs> predicted, std::vector<LandmarkObs>& observations) {
@@ -61,7 +84,17 @@ void ParticleFilter::resample() {
 	// TODO: Resample particles with replacement with probability proportional to their weight. 
 	// NOTE: You may find std::discrete_distribution helpful here.
 	//   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
+    std::vector<Particle> resampled;
+    resampled.resize(num_particles);
 
+    std::discrete_distribution<unsigned int> dist(weights.begin(), weights.end());
+    std::default_random_engine gen;
+
+    for (unsigned int i = 0; i < num_particles; ++i) {
+        unsigned int sample = dist(gen);
+        resampled[i] = particles[sample];
+    }
+    particles = resampled;
 }
 
 Particle ParticleFilter::SetAssociations(Particle particle, std::vector<int> associations, std::vector<double> sense_x, std::vector<double> sense_y)
