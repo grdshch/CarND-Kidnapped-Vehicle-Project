@@ -55,6 +55,13 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
             p.y += velocity / yaw_rate * (std::cos(p.theta) - std::cos(p.theta + yaw_rate * delta_t));
             p.theta += yaw_rate * delta_t;
         }
+        std::normal_distribution<double> dist_x(p.x, std_pos[0]);
+        std::normal_distribution<double> dist_y(p.y, std_pos[1]);
+        std::normal_distribution<double> dist_t(p.theta, std_pos[2]);
+        std::default_random_engine gen;
+        p.x = dist_x(gen);
+        p.y = dist_y(gen);
+        p.theta = dist_t(gen);
     }
 }
 
@@ -63,10 +70,26 @@ void ParticleFilter::dataAssociation(std::vector<LandmarkObs> predicted, std::ve
 	//   observed measurement to this particular landmark.
 	// NOTE: this method will NOT be called by the grading code. But you will probably find it useful to 
 	//   implement this method and use it as a helper during the updateWeights phase.
-
+    for (auto& obs: observations) {
+        auto closest = std::min_element(predicted.begin(), predicted.end(),
+                                    [&](LandmarkObs l1, LandmarkObs l2) {
+                                        double dist1 = (l1.x - obs.x) * (l1.x - obs.x) + (l1.y - obs.y) * (l1.y - obs.y);
+                                        double dist2 = (l2.x - obs.x) * (l2.x - obs.x) + (l2.y - obs.y) * (l2.y - obs.y);
+                                        return dist1 < dist2;
+                                    });
+        obs.id = closest->id;
+    }
 }
 
-void ParticleFilter::updateWeights(double sensor_range, double std_landmark[], 
+LandmarkObs transform(Particle p, Map::single_landmark_s lm) {
+    LandmarkObs observation;
+    observation.x = lm.x_f * std::cos(p.theta) - lm.x_f * std::sin(p.theta) + p.x;
+    observation.y = lm.x_f * std::sin(p.theta) + lm.x_f * std::cos(p.theta) + p.y;
+    observation.id = lm.id_i;
+    return observation;
+}
+
+void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 		std::vector<LandmarkObs> observations, Map map_landmarks) {
 	// TODO: Update the weights of each particle using a mult-variate Gaussian distribution. You can read
 	//   more about this distribution here: https://en.wikipedia.org/wiki/Multivariate_normal_distribution
@@ -78,6 +101,30 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 	//   and the following is a good resource for the actual equation to implement (look at equation 
 	//   3.33
 	//   http://planning.cs.uiuc.edu/node99.html
+
+    double C = 1.0 / 2.0 / M_PI / std_landmark[0] / std_landmark[0];
+    double weight_sum = 0;
+    for (auto& p: particles) {
+        std::vector<LandmarkObs> predicted;
+        for (auto& lm: map_landmarks.landmark_list) {
+            if ((lm.x_f - p.x) * (lm.x_f - p.x) + (lm.y_f - p.y) * (lm.y_f - p.y) < sensor_range * sensor_range) {
+                predicted.push_back(transform(p, lm));
+            }
+        }
+        dataAssociation(predicted, observations);
+
+        p.weight = 1;
+        for (auto& obs: observations) {
+            auto landmark = transform(p, map_landmarks.landmark_list[obs.id - 1]);
+            p.weight *= C;
+            p.weight *= std::exp(-(obs.x - landmark.x) * (obs.x - landmark.x) / 2 / std_landmark[0] / std_landmark[0]);
+            p.weight *= std::exp(-(obs.y - landmark.y) * (obs.y - landmark.y) / 2 / std_landmark[0] / std_landmark[0]);
+        }
+        weight_sum += p.weight;
+    }
+    for (auto& p: particles) {
+        p.weight /= weight_sum;
+    }
 }
 
 void ParticleFilter::resample() {
