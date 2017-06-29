@@ -20,7 +20,7 @@
 using namespace std;
 
 void ParticleFilter::init(double x, double y, double theta, double std[]) {
-    num_particles = 10;
+    num_particles = 1000;
     particles.reserve(num_particles);
 
     std::normal_distribution<double> dist_x(x, std[0]);
@@ -32,6 +32,8 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
         particles.emplace_back(Particle(i, dist_x(gen), dist_y(gen), dist_t(gen), 1));
     }
     weights.resize(num_particles, 1);
+
+    is_initialized = true;
 
 	// TODO: Set the number of particles. Initialize all particles to first position (based on estimates of 
 	//   x, y, theta and their uncertainties from GPS) and all weights to 1. 
@@ -46,7 +48,7 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
 	//  http://en.cppreference.com/w/cpp/numeric/random/normal_distribution
 	//  http://www.cplusplus.com/reference/random/default_random_engine/
     for (auto& p: particles) {
-        if (fabs(yaw_rate) < 0.0001f) {
+        if (yaw_rate == 0) {
             p.x += velocity * delta_t * std::cos(p.theta);
             p.y += velocity * delta_t * std::sin(p.theta);
         }
@@ -83,8 +85,8 @@ void ParticleFilter::dataAssociation(std::vector<LandmarkObs> predicted, std::ve
 
 LandmarkObs transform(Particle p, Map::single_landmark_s lm) {
     LandmarkObs observation;
-    observation.x = lm.x_f * std::cos(p.theta) - lm.x_f * std::sin(p.theta) + p.x;
-    observation.y = lm.x_f * std::sin(p.theta) + lm.x_f * std::cos(p.theta) + p.y;
+    observation.x = lm.x_f * std::cos(-p.theta) - lm.y_f * std::sin(-p.theta) - p.x;
+    observation.y = lm.x_f * std::sin(-p.theta) + lm.y_f * std::cos(-p.theta) - p.y;
     observation.id = lm.id_i;
     return observation;
 }
