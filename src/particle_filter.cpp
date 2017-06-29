@@ -20,13 +20,14 @@
 using namespace std;
 
 void ParticleFilter::init(double x, double y, double theta, double std[]) {
-    num_particles = 100;
+    num_particles = 5;
     particles.reserve(num_particles);
 
     std::normal_distribution<double> dist_x(x, std[0]);
     std::normal_distribution<double> dist_y(y, std[1]);
     std::normal_distribution<double> dist_t(theta, std[2]);
-    std::default_random_engine gen;
+    std::random_device rd;
+    std::mt19937 gen(rd());
 
     for (unsigned int i = 0; i < num_particles; ++i) {
         particles.emplace_back(Particle(i, dist_x(gen), dist_y(gen), dist_t(gen), 1));
@@ -48,7 +49,7 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
 	//  http://en.cppreference.com/w/cpp/numeric/random/normal_distribution
 	//  http://www.cplusplus.com/reference/random/default_random_engine/
     for (auto& p: particles) {
-        if (yaw_rate == 0) {
+        if (fabs(yaw_rate) < 0.0001) {
             p.x += velocity * delta_t * std::cos(p.theta);
             p.y += velocity * delta_t * std::sin(p.theta);
         }
@@ -57,15 +58,27 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
             p.y += velocity / yaw_rate * (std::cos(p.theta) - std::cos(p.theta + yaw_rate * delta_t));
             p.theta += yaw_rate * delta_t;
         }
+
+        std::random_device rd;
+        std::mt19937 gen(rd());
+
+        std::normal_distribution<double> dist_x(0.0, std_pos[0]);
+        std::normal_distribution<double> dist_y(0.0, std_pos[1]);
+        std::normal_distribution<double> dist_t(0.0, std_pos[2]);
+        //p.x += dist_x(gen);
+        //p.y += dist_y(gen);
+        //p.theta += dist_t(gen);
+
         /*
+
         std::normal_distribution<double> dist_x(p.x, std_pos[0]);
         std::normal_distribution<double> dist_y(p.y, std_pos[1]);
         std::normal_distribution<double> dist_t(p.theta, std_pos[2]);
-        std::default_random_engine gen;
+
         p.x = dist_x(gen);
         p.y = dist_y(gen);
         p.theta = dist_t(gen);
-         */
+    */
     }
 }
 
@@ -106,7 +119,7 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 	//   3.33
 	//   http://planning.cs.uiuc.edu/node99.html
 
-    double C = 1.0 / 2.0 / M_PI / std_landmark[0] / std_landmark[1];
+    double C = 1.0 / (2.0 * M_PI * std_landmark[0] * std_landmark[1]);
     double weight_sum = 0;
     for (auto& p: particles) {
         std::vector<int> associations;
@@ -114,33 +127,32 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
         std::vector<double> sense_y;
         std::vector<Map::single_landmark_s> closest_landmarks;
         for (auto& lm: map_landmarks.landmark_list) {
-            if ((lm.x_f - p.x) * (lm.x_f - p.x) + (lm.y_f - p.y) * (lm.y_f - p.y) < sensor_range * sensor_range) {
+            if (dist(lm.x_f, lm.y_f, p.x, p.y) < sensor_range) {
                 closest_landmarks.push_back(lm);
             }
         }
 
-        p.weight = 1;
+        p.weight = 1.;
         for (auto& obs: observations) {
-            LandmarkObs observation;
-            observation.x = obs.x * std::cos(p.theta) - obs.y * std::sin(p.theta) + p.x;
-            observation.y = obs.y * std::sin(p.theta) + obs.y * std::cos(p.theta) + p.y;
+            LandmarkObs map_obs;
+            map_obs.x = obs.x * std::cos(p.theta) - obs.y * std::sin(p.theta) + p.x;
+            map_obs.y = obs.y * std::sin(p.theta) + obs.y * std::cos(p.theta) + p.y;
 
-            double min_dist = 1000;
-            Map::single_landmark_s closest_lm;
-            for (auto& lm: closest_landmarks) {
-                double d = (lm.x_f - observation.x) * (lm.x_f - observation.x) + (lm.y_f - observation.y) * (lm.y_f - observation.y);
-                if (d < min_dist) {
-                    min_dist = d;
-                    closest_lm = lm;
-                }
-            }
-            associations.push_back(obs.id);
-            sense_x.push_back(obs.x);
-            sense_y.push_back(obs.y);
+            auto closest_it = std::min_element(closest_landmarks.begin(), closest_landmarks.end(),
+                                            [&](Map::single_landmark_s l1, Map::single_landmark_s l2) {
+                                                double d1 = dist(l1.x_f, l1.y_f, map_obs.x, map_obs.y);
+                                                double d2 = dist(l2.x_f, l2.y_f, map_obs.x, map_obs.y);
+                                                return d1 < d2;
+                                            });
 
-            p.weight *= C;
-            p.weight *= std::exp(-(observation.x - closest_lm.x_f) * (observation.x - closest_lm.x_f) / 2 / std_landmark[0] / std_landmark[0]);
-            p.weight *= std::exp(-(observation.y - closest_lm.y_f) * (observation.y - closest_lm.y_f) / 2 / std_landmark[1] / std_landmark[1]);
+            associations.push_back(closest_it->id_i);
+            sense_x.push_back(map_obs.x);
+            sense_y.push_back(map_obs.y);
+
+            double x_part = 0.5 * (map_obs.x - closest_it->x_f) * (map_obs.x - closest_it->x_f) / std_landmark[0] / std_landmark[0];
+            double y_part = 0.5 * (map_obs.y - closest_it->y_f) * (map_obs.y - closest_it->y_f) / std_landmark[1] / std_landmark[1];
+            p.weight *= C * std::exp(-(x_part + y_part));
+            //p.weight *= std::exp(-(map_obs.y - closest_it->y_f) * (map_obs.y - closest_it->y_f) / 2 / std_landmark[1] / std_landmark[1]);
         }
         SetAssociations(p, associations, sense_x, sense_y);
         //dataAssociation(predicted, observations);
@@ -165,6 +177,7 @@ void ParticleFilter::resample() {
     }
 
     std::discrete_distribution<unsigned int> dist(weights.begin(), weights.end());
+
     std::random_device rd;
     std::mt19937 gen(rd());
 
