@@ -65,9 +65,9 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
         std::normal_distribution<double> dist_x(0.0, std_pos[0]);
         std::normal_distribution<double> dist_y(0.0, std_pos[1]);
         std::normal_distribution<double> dist_t(0.0, std_pos[2]);
-        //p.x += dist_x(gen);
-        //p.y += dist_y(gen);
-        //p.theta += dist_t(gen);
+        p.x += dist_x(gen);
+        p.y += dist_y(gen);
+        p.theta += dist_t(gen);
 
         /*
 
@@ -98,14 +98,6 @@ void ParticleFilter::dataAssociation(std::vector<LandmarkObs> predicted, std::ve
     }
 }
 
-LandmarkObs transform(Particle p, Map::single_landmark_s lm) {
-    LandmarkObs observation;
-    observation.x = lm.x_f * std::cos(-p.theta) - lm.y_f * std::sin(-p.theta) - p.x;
-    observation.y = lm.x_f * std::sin(-p.theta) + lm.y_f * std::cos(-p.theta) - p.y;
-    observation.id = lm.id_i;
-    return observation;
-}
-
 void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 		std::vector<LandmarkObs> observations, Map map_landmarks) {
 	// TODO: Update the weights of each particle using a mult-variate Gaussian distribution. You can read
@@ -119,8 +111,7 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 	//   3.33
 	//   http://planning.cs.uiuc.edu/node99.html
 
-    double C = 1.0 / (2.0 * M_PI * std_landmark[0] * std_landmark[1]);
-    double weight_sum = 0;
+    double C = 2.0 * M_PI * std_landmark[0] * std_landmark[1];
     for (auto& p: particles) {
         std::vector<int> associations;
         std::vector<double> sense_x;
@@ -136,23 +127,22 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
         for (auto& obs: observations) {
             LandmarkObs map_obs;
             map_obs.x = obs.x * std::cos(p.theta) - obs.y * std::sin(p.theta) + p.x;
-            map_obs.y = obs.y * std::sin(p.theta) + obs.y * std::cos(p.theta) + p.y;
+            map_obs.y = obs.x * std::sin(p.theta) + obs.y * std::cos(p.theta) + p.y;
 
-            auto closest_it = std::min_element(closest_landmarks.begin(), closest_landmarks.end(),
+            auto closest_lm_it = std::min_element(closest_landmarks.begin(), closest_landmarks.end(),
                                             [&](Map::single_landmark_s l1, Map::single_landmark_s l2) {
                                                 double d1 = dist(l1.x_f, l1.y_f, map_obs.x, map_obs.y);
                                                 double d2 = dist(l2.x_f, l2.y_f, map_obs.x, map_obs.y);
                                                 return d1 < d2;
                                             });
 
-            associations.push_back(closest_it->id_i);
+            associations.push_back(closest_lm_it->id_i);
             sense_x.push_back(map_obs.x);
             sense_y.push_back(map_obs.y);
 
-            double x_part = 0.5 * (map_obs.x - closest_it->x_f) * (map_obs.x - closest_it->x_f) / std_landmark[0] / std_landmark[0];
-            double y_part = 0.5 * (map_obs.y - closest_it->y_f) * (map_obs.y - closest_it->y_f) / std_landmark[1] / std_landmark[1];
-            p.weight *= C * std::exp(-(x_part + y_part));
-            //p.weight *= std::exp(-(map_obs.y - closest_it->y_f) * (map_obs.y - closest_it->y_f) / 2 / std_landmark[1] / std_landmark[1]);
+            double x_part = 0.5f * std::pow(map_obs.x - closest_lm_it->x_f, 2) / pow(std_landmark[0], 2);
+            double y_part = 0.5f * std::pow(map_obs.y - closest_lm_it->y_f, 2) / pow(std_landmark[1], 2);
+            p.weight *= std::exp(-(x_part + y_part)) / C;
         }
         SetAssociations(p, associations, sense_x, sense_y);
         //dataAssociation(predicted, observations);
