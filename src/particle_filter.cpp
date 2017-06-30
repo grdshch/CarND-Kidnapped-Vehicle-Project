@@ -20,7 +20,7 @@
 using namespace std;
 
 void ParticleFilter::init(double x, double y, double theta, double std[]) {
-    num_particles = 5;
+    num_particles = 10;
     particles.reserve(num_particles);
 
     std::random_device rd;
@@ -29,6 +29,7 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
     std::normal_distribution<double> dist_y(y, std[1]);
     std::normal_distribution<double> dist_theta(theta, std[2]);
 
+    // initialize all particles using GPS coordinates and adding Gaussian noise
     for (unsigned int i = 0; i < num_particles; ++i) {
         Particle p;
         p.id = i;
@@ -44,6 +45,13 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
 }
 
 void ParticleFilter::prediction(double delta_t, double std_pos[], double velocity, double yaw_rate) {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::normal_distribution<double> dist_x(0.0, std_pos[0]);
+    std::normal_distribution<double> dist_y(0.0, std_pos[1]);
+    std::normal_distribution<double> dist_t(0.0, std_pos[2]);
+
+    // predict next position of every particle
     for (auto& p: particles) {
         if (fabs(yaw_rate) < 0.0001) {
             p.x += velocity * delta_t * std::cos(p.theta);
@@ -54,15 +62,9 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
             p.y += velocity / yaw_rate * (std::cos(p.theta) - std::cos(p.theta + yaw_rate * delta_t));
             p.theta += yaw_rate * delta_t;
         }
-
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        std::normal_distribution<double> dist_x(p.x, std_pos[0]);
-        std::normal_distribution<double> dist_y(p.y, std_pos[1]);
-        std::normal_distribution<double> dist_t(p.theta, std_pos[2]);
-        p.x = dist_x(gen);
-        p.y = dist_y(gen);
-        p.theta = dist_t(gen);
+        p.x += dist_x(gen);
+        p.y += dist_y(gen);
+        p.theta += dist_t(gen);
     }
 }
 
@@ -70,11 +72,10 @@ void ParticleFilter::dataAssociation(std::vector<LandmarkObs> predicted, std::ve
 
 void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
                                    std::vector<LandmarkObs> observations, Map map_landmarks) {
-    double C = 2.0 * M_PI * std_landmark[0] * std_landmark[1];
+    double C = std::pow(2.0 * M_PI * std_landmark[0] * std_landmark[1], observations.size());
     for (auto& p: particles) {
-        std::vector<int> associations;
-        std::vector<double> sense_x;
-        std::vector<double> sense_y;
+
+        // find all map landmarks within sensor_range of current particle
         std::vector<Map::single_landmark_s> closest_landmarks;
         for (auto& lm: map_landmarks.landmark_list) {
             if (dist(lm.x_f, lm.y_f, p.x, p.y) < sensor_range) {
@@ -84,26 +85,33 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 
         p.weight = 1.;
         for (auto& obs: observations) {
+            // transform observation position from vehicle's to global coordinates
             LandmarkObs map_obs;
             map_obs.x = obs.x * std::cos(p.theta) - obs.y * std::sin(p.theta) + p.x;
             map_obs.y = obs.x * std::sin(p.theta) + obs.y * std::cos(p.theta) + p.y;
 
-            auto closest_lm_it = std::min_element(closest_landmarks.begin(), closest_landmarks.end(),
-                                            [&](Map::single_landmark_s l1, Map::single_landmark_s l2) {
-                                                double d1 = dist(l1.x_f, l1.y_f, map_obs.x, map_obs.y);
-                                                double d2 = dist(l2.x_f, l2.y_f, map_obs.x, map_obs.y);
-                                                return d1 < d2;
-                                            });
-            double x_part = 0.5f * std::pow(map_obs.x - closest_lm_it->x_f, 2) / pow(std_landmark[0], 2);
-            double y_part = 0.5f * std::pow(map_obs.y - closest_lm_it->y_f, 2) / pow(std_landmark[1], 2);
-            p.weight *= std::exp(-(x_part + y_part)) / C;
+            // for each observation find closest map landmark
+            double min_dist = 1000;
+            Map::single_landmark_s closest_lm;
+            for (auto& lm: closest_landmarks) {
+                double d = dist(map_obs.x, map_obs.y, lm.x_f, lm.y_f);
+                if (d < min_dist) {
+                    closest_lm = lm;
+                    min_dist = d;
+                }
+            }
+            // calculate multivariate Gaussian probability
+            double x_part = 0.5f * std::pow(map_obs.x - closest_lm.x_f, 2) / pow(std_landmark[0], 2);
+            double y_part = 0.5f * std::pow(map_obs.y - closest_lm.y_f, 2) / pow(std_landmark[1], 2);
+            p.weight *= std::exp(-(x_part + y_part));
         }
+        p.weight /= C;
     }
 }
 
 void ParticleFilter::resample() {
     std::vector<Particle> resampled;
-    resampled.resize(num_particles);
+    resampled.reserve(num_particles);
 
     for (unsigned int i = 0; i < num_particles; ++i) {
         weights[i] = particles[i].weight;
@@ -115,7 +123,7 @@ void ParticleFilter::resample() {
 
     for (unsigned int i = 0; i < num_particles; ++i) {
         unsigned int sample = dist(gen);
-        resampled[i] = particles[sample];
+        resampled.push_back(particles[sample]);
     }
     particles = resampled;
 }
